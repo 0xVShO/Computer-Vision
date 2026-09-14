@@ -16,11 +16,11 @@
 ### Як запустити проєкти локально
 1) **Клонувати репозиторій**
 ```bash
-git clone 
+git clone https://github.com/0xVShO/Computer-Vision.git
 ```
 2) **Перейти всередину монорепозиторію**
 ```bash
-cd Computer Vision
+cd Computer-Vision
 ```
 3) **Створіть та активуйте віртуальне середовище**
 
