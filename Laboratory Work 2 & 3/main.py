@@ -26,13 +26,13 @@ class WatershedRectPipeline:
         '''Метод динамічної ініціалізації параметрів'''
         self.attr.update(kwargs)
 
-    def interface_init(self):
+    def interface_init(self, is_google_flag):
         '''Метод ініціалізації інтерфейсу налаштувань та перегляду результатів'''
         checkbox = ctk.CTkCheckBox(
             master=self.root, 
             text="Показувати маску (Watershed Regions)", 
             variable=self.show_mask, 
-            command=self.pipeline
+            command=lambda: self.pipeline(is_google=is_google_flag)
         )
         checkbox.pack(pady=(15, 10))
         
@@ -48,17 +48,17 @@ class WatershedRectPipeline:
                 from_=minimum,
                 to=maximum,
                 number_of_steps=int((maximum - minimum) / step_val) if step_val > 0 else None,
-                command=lambda val, k=key: self.on_slider_change(k, val)
+                command=lambda val, k=key, g_flag=is_google_flag: self.on_slider_change(k, val, g_flag)
             )
             slider.pack(pady=(2, 5))
             slider.set(value)
 
-    def on_slider_change(self, key, value):
+    def on_slider_change(self, key, value, is_google_flag):
         '''Метод обробки при зміні значення на слайдері'''
         valid_value = self.value_check(key, value)
         self.attr[key][1] = valid_value
         self.labels[key].configure(text=f"{key}: {valid_value}")
-        self.pipeline()
+        self.pipeline(is_google=is_google_flag)
 
     def value_check(self, key, raw_value):
         '''Метод перевірки корректності введених через слайдер даних'''
@@ -69,8 +69,21 @@ class WatershedRectPipeline:
         snapped_value = max(minimum, min(snapped_value, maximum))
         return int(snapped_value) if isinstance(step, int) else snapped_value
 
-    def pipeline(self):
+    def pipeline(self, is_google=False):
         '''Основний метод для виконання загального алгоритму детекції будівель'''
+        
+        # Створюємо робочу копію сірого зображення
+        working_gray = self.gray_img.copy()
+
+        if is_google:
+            # Трюк для ортофотоплану Google: створюємо штучні "стеньі" (контурний об'єм) 
+            # через морфологічний градієнт, щоб адаптивний поріг бачив плоскі дахи
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            morph_grad = cv2.morphologyEx(working_gray, cv2.MORPH_GRADIENT, kernel)
+            
+            # Змішуємо оригінальний сірий кадр з градієнтом країв (ефект "псевдо-фасадів")
+            working_gray = cv2.addWeighted(working_gray, 0.8, morph_grad, 0.2, 0)
+        
         # Отримання базових параметрів
         blur_k = self.attr['_1_bilateral_blur'][1]
         thresh_block = self.attr['_3_thresh_block'][1]
@@ -83,13 +96,13 @@ class WatershedRectPipeline:
         min_extent = self.attr['_10_min_extent_pct'][1] / 100.0
         watershed_dist = self.attr['_11_watershed_dist'][1] / 100.0
 
-        # Підготовка та поріг
-        blurred = cv2.bilateralFilter(self.gray_img, blur_k, 50, 50) # Використання Білатерального фільтру для усунення зайвих шумів зі збереженням контрасту границь об'єктів
-        clahe = cv2.createCLAHE(clipLimit=self.attr['_2_clahe_clip'][1], tileGridSize=(8, 8)) # Коррекція контрасту границь об'єктів
+        # Підготовка та поріг (використовуємо working_gray замість self.gray_img)
+        blurred = cv2.bilateralFilter(working_gray, blur_k, 50, 50) 
+        clahe = cv2.createCLAHE(clipLimit=self.attr['_2_clahe_clip'][1], tileGridSize=(8, 8))
         contrasted = clahe.apply(blurred)
 
-        thresh_block_size = max(3, thresh_block | 1) # Ядор адаптивної бінарізації
-        thresh = cv2.adaptiveThreshold( # Блок адаптивної бінарізації 
+        thresh_block_size = max(3, thresh_block | 1)
+        thresh = cv2.adaptiveThreshold( 
             contrasted, 255, 
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
             cv2.THRESH_BINARY, 
@@ -97,25 +110,24 @@ class WatershedRectPipeline:
         )
 
         # Морфологія та монолітна маска
-        edges = cv2.Canny(thresh, 50, 150) # Детекція границь Кенні
+        edges = cv2.Canny(thresh, 50, 150)
         k_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, self.attr['_5_dilate_edges'][1] | 1),)*2)
         dilated_edges = cv2.dilate(edges, k_dilate, iterations=1)
 
-        # Блок малювання знайдних границь об'єктів
+        # Блок малювання знайдених границь об'єктів
         raw_contours, _ = cv2.findContours(dilated_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        solid_mask = np.zeros_like(self.gray_img)
+        solid_mask = np.zeros_like(working_gray)
         cv2.drawContours(solid_mask, raw_contours, -1, 255, -1)
 
         # Блок морфологічних операцій
-        k_erode = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, self.attr['_6_erode_mask'][1] | 1),)*2) # Операція Ерозії
+        k_erode = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, self.attr['_6_erode_mask'][1] | 1),)*2)
         separated_mask = cv2.erode(solid_mask, k_erode, iterations=1)
 
-        # Ядра для морфологічних операцій
         k_open = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, open_k | 1),)*2)
         k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, close_k | 1),)*2)
         
-        cleaned_mask = cv2.morphologyEx(separated_mask, cv2.MORPH_OPEN, k_open) # Морфологічна операція відкриття
-        final_solid_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, k_close) # Морфологічна операція закриття
+        cleaned_mask = cv2.morphologyEx(separated_mask, cv2.MORPH_OPEN, k_open)
+        final_solid_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, k_close)
 
         # Сегментація методом вододілу
         sure_bg = cv2.dilate(final_solid_mask, np.ones((3,3), np.uint8), iterations=3)
@@ -162,7 +174,6 @@ class WatershedRectPipeline:
             area = cv2.contourArea(cnt)
             
             if area > min_area:
-                # Отримуємо мінімальний прямокутник
                 rect = cv2.minAreaRect(cnt)
                 width, height = rect[1]
                 
@@ -172,10 +183,8 @@ class WatershedRectPipeline:
                 rect_area = width * height
                 extent = area / rect_area
 
-                # Відсіюємо сміття за параметром Extent
                 if extent >= min_extent:
                     valid_buildings_count += 1
-                    # Отримуємо 4 кути прямокутника і малюємо його
                     box = cv2.boxPoints(rect)
                     box = np.int32(box)
                     cv2.drawContours(output_img, [box], 0, (0, 0, 255), 2)
@@ -200,9 +209,11 @@ if __name__ == "__main__":
         
         if choice in ['1', '2']:
             img_src = bing_img_src if choice == '1' else google_img_src
-            GUI = WatershedRectPipeline(img_src=img_src, root=root) # Ініціаліація екземпляру класу інтерфейсу
+            is_google_flag = (choice == '2')  # Чіткий булевий прапор
             
-            GUI.param_init( # Ініціалізація необхіднхи параметрів для пайплайну
+            GUI = WatershedRectPipeline(img_src=img_src, root=root)
+            
+            GUI.param_init(
                 _1_bilateral_blur=[1, 11, 21, 2],         
                 _2_clahe_clip=[1, 1, 10, 1],
                 _3_thresh_block=[3, 63, 151, 2],
@@ -220,6 +231,6 @@ if __name__ == "__main__":
             print("Спробуйте ще раз!")
             sleep(1)
             
-    GUI.interface_init() # Ініціалізація інтерфейсу
-    GUI.pipeline() # Запуск загального алгоритму детекції будівель
+    GUI.interface_init(is_google_flag)
+    GUI.pipeline(is_google=is_google_flag)
     root.mainloop()
