@@ -1,0 +1,25 @@
+=== OBJECT TRACKER PERFORMANCE REPORT (VEHICLES) ===
+Video: test.mp4 (800x450)
+Config: detect_interval=4, conf=0.45, iou=0.25, max_missed=12, imgsz=480
+Frames processed: 78 | Total time: 5.34s
+
+--- FPS ---
+Avg: 25.18 | Median: 29.25 | P10 (lows): 12.35 | Min: 0.55 | Max: 35.35
+
+--- TIMING BREAKDOWN (ms per call) ---
+Kalman predict  : avg=0.22 ms | max=0.35 ms
+YOLO detect     : avg=132.43 ms | max=1750.41 ms
+SORT compare    : avg=0.72 ms | max=1.22 ms
+Draw + write    : avg=11.22 ms | max=44.76 ms
+
+--- DETECTION & TRACKER STATS ---
+Active trackers : avg=9.68 | max=13
+Total created   : 23
+YOLO detections : 166 -> matched: 143, new: 23
+Removed reasons : missed=11, oob=0
+Counts by type  : {'motorcycle': 1, 'car': 15, 'bus': 6, 'truck': 1}
+
+--- TIMELINE (every 30 frames) ---
+frame | fps   | active | predict_ms | detect_ms | compare_ms | detections
+   30 |  29.7 |     11 |       0.21 |      0.00 |       0.00 | 0
+   60 |  12.9 |      8 |       0.18 |     44.94 |       0.65 | 6
